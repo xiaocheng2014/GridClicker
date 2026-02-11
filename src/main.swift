@@ -23,6 +23,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let kTapThreshold: TimeInterval = 0.3
     
     var isDragging: Bool = false
+    var isTMode: Bool = false
     var firstChar: String? = nil
     
     enum AppState {
@@ -200,6 +201,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     if !isDragging { toggleDrag(enable: true) }
                 } else if type == .keyUp {
                     if isDragging { toggleDrag(enable: false) }
+                }
+                return true
+            }
+
+            // Handle T Key for Dragging (Keycode 17)
+            if keyCode == 17 { // T
+                if isKeyDown {
+                    if !isTMode {
+                        toggleDrag(enable: true)
+                        isTMode = true
+                    }
+                } else if type == .keyUp {
+                    if isTMode {
+                        toggleDrag(enable: false)
+                        isTMode = false
+                    }
                 }
                 return true
             }
@@ -385,7 +402,7 @@ class HintView: NSView {
         let text: String
         switch state {
         case .gridSelection: text = "网格定位 | ESC: 隐藏"
-        case .fineTuning: text = "微调模式 | HJKL: 移动 | Space: 点击 | M: 右键 | ESC: 退出"
+        case .fineTuning: text = "微调模式 | HJKL: 移动 | Space: 点击 | M: 右键 | T(Hold): 拖拽 | ESC: 退出"
         case .scrolling: text = "滚动模式 | J/K: 滚动 | ESC: 退出"
         case .hidden: return
         }
