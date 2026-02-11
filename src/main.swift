@@ -151,116 +151,88 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // --- Logic for ACTIVE states (Intercept Keys) ---
         
-        // Only handle Key events, ignore Modifier flags (except ensuring they don't block us)
+        // Always pass through modifier flags (Shift, Cmd, etc.) to avoid sticking
         if type == .flagsChanged { return false }
         
         let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let isKeyDown = (type == .keyDown)
         
-        // Handle ESC globally in active modes
-        if type == .keyDown && keyCode == 53 { // ESC
-            // Cancel Drag if active
+        // 1. Global ESC handling
+        if isKeyDown && keyCode == 53 { // ESC
             if isDragging { toggleDrag(enable: false) }
             DispatchQueue.main.async { self.state = .hidden }
             return true
         }
         
-        // --- SCROLLING MODE ---
-        if state == .scrolling && type == .keyDown {
-            if keyCode == 38 { scrollMouse(dy: -5); return true } // J
-            if keyCode == 40 { scrollMouse(dy: 5); return true } // K
-            return true // Block other keys in scroll mode? Or let them pass? Let's block navigation keys.
-        }
-        
-        // --- GRID SELECTION ---
-        if state == .gridSelection && type == .keyDown {
-            if keyCode == 51 { // Backspace
-                firstChar = nil
-                DispatchQueue.main.async { self.hintView.needsDisplay = true }
-                return true
+        // 2. Mode Specific Handling
+        switch state {
+        case .scrolling:
+            if isKeyDown {
+                if keyCode == 38 { scrollMouse(dy: -5); return true } // J
+                if keyCode == 40 { scrollMouse(dy: 5); return true } // K
             }
+            return true // Swallow all keys in scroll mode to be safe
             
-            // Map KeyCode to Char (Simple A-Z mapping)
-            // A=0, B=11, C=8 ... this is hard. Use KeyCode map or rely on event chars?
-            // CGEvent doesn't easily give chars. We can use a simple mapping or just use Unichar.
-            // Let's use a simple lookup for A-Z.
-            if let char = keyCodeToChar(keyCode) {
-                if firstChar == nil {
-                    firstChar = char
+        case .gridSelection:
+            if isKeyDown {
+                if keyCode == 51 { // Backspace
+                    firstChar = nil
                     DispatchQueue.main.async { self.hintView.needsDisplay = true }
-                } else {
-                    let label = firstChar! + char
-                    DispatchQueue.main.async { self.selectGrid(label: label) }
+                    return true
                 }
-                return true
+                if let char = keyCodeToChar(keyCode) {
+                    if firstChar == nil {
+                        firstChar = char
+                        DispatchQueue.main.async { self.hintView.needsDisplay = true }
+                    } else {
+                        let label = firstChar! + char
+                        DispatchQueue.main.async { self.selectGrid(label: label) }
+                    }
+                    return true
+                }
             }
-            return true // Block other keys
-        }
-        
-        // --- FINE TUNING ---
-        if state == .fineTuning {
-            // Handle V Key Up (Stop Drag)
-            if type == .keyUp && keyCode == 9 { // V = 9
-                if isDragging { toggleDrag(enable: false) }
+            return true // Swallow keys in grid selection
+            
+        case .fineTuning:
+            // Handle V Key specially (it has a KeyUp action)
+            if keyCode == 9 { // V
+                if isKeyDown {
+                    if !isDragging { toggleDrag(enable: true) }
+                } else if type == .keyUp {
+                    if isDragging { toggleDrag(enable: false) }
+                }
                 return true
             }
             
-            if type == .keyDown {
-                // V (Start Drag)
-                if keyCode == 9 {
-                    if !isDragging { toggleDrag(enable: true) }
-                    return true
-                }
-                
-                // Enter (Copy & Exit)
-                if keyCode == 36 || keyCode == 76 {
-                    performCopyAndExit()
-                    return true
-                }
-                
-                // O (Scroll Mode) - 31
-                if keyCode == 31 {
-                    enterScrollMode()
-                    return true
-                }
-                
-                // M (Right Click) - 46
-                if keyCode == 46 {
-                    performClick(rightClick: true)
-                    return true
-                }
-                
-                // Space (Left Click) - 49
-                if keyCode == 49 {
-                    performClick(rightClick: false)
-                    return true
-                }
-                
-                // HJKL Movement
-                var dx: CGFloat = 0; var dy: CGFloat = 0
-                if keyCode == 4 { dx = -kCursorStep } // H
-                else if keyCode == 37 { dx = kCursorStep } // L
-                else if keyCode == 38 { dy = kCursorStep } // J
-                else if keyCode == 40 { dy = -kCursorStep } // K
-                
-                if dx != 0 || dy != 0 {
-                    moveCursor(dx: dx, dy: dy)
-                    return true
-                }
-                
-                // Backspace (Back)
-                if keyCode == 51 {
+            // Other Fine Tuning keys (KeyDown only)
+            if isKeyDown {
+                switch keyCode {
+                case 36, 76: performCopyAndExit(); return true // Enter
+                case 31: enterScrollMode(); return true         // O
+                case 46: performClick(rightClick: true); return true // M
+                case 49: performClick(rightClick: false); return true // Space
+                case 4: moveCursor(dx: -kCursorStep, dy: 0); return true // H
+                case 37: moveCursor(dx: kCursorStep, dy: 0); return true // L
+                case 38: moveCursor(dx: 0, dy: kCursorStep); return true // J
+                case 40: moveCursor(dx: 0, dy: -kCursorStep); return true // K
+                case 51: // Backspace
                     DispatchQueue.main.async {
                         self.state = .gridSelection
                         self.firstChar = nil
                         self.hintView.needsDisplay = true
                     }
                     return true
+                default: break
                 }
             }
-            return true // Block others
+            
+            // CRITICAL: Only swallow KeyDown/KeyUp if they are likely intended for us.
+            // In fine-tuning, we generally want to swallow all letter/nav keys.
+            return true
+            
+        case .hidden:
+            return false
         }
-        
-        return false
     }
     
     // Simple QWERTY mapping for A-Z
@@ -278,6 +250,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func toggleGrid() {
         if state == .hidden || state == .scrolling { state = .gridSelection }
         else { state = .hidden }
+        // Force immediate redraw
+        DispatchQueue.main.async {
+            self.hintView.needsDisplay = true
+        }
     }
     
     func toggleDrag(enable: Bool) {
@@ -367,7 +343,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     func performClick(rightClick: Bool) {
         let pos = CGEvent(source: nil)?.location ?? .zero
-        state = .hidden // Hide UI immediately
+        // Keep active for continuous control until ESC is pressed
         
         let src = CGEventSource(stateID: .combinedSessionState)
         
@@ -389,11 +365,53 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 class HintView: NSView {
     weak var appDelegate: AppDelegate?
     override var isFlipped: Bool { return true }
+    
     override func draw(_ dirtyRect: NSRect) {
         guard let app = appDelegate else { return }
-        if app.state == .fineTuning || app.state == .scrolling { return }
+        if app.state == .hidden { return }
         
         let bounds = self.bounds
+        
+        // Always draw status hint if not hidden
+        drawStatusHint(in: bounds, state: app.state)
+        
+        // Only draw grid during selection phase
+        if app.state == .gridSelection {
+            drawGrid(in: bounds, app: app)
+        }
+    }
+    
+    private func drawStatusHint(in bounds: NSRect, state: AppDelegate.AppState) {
+        let text: String
+        switch state {
+        case .gridSelection: text = "网格定位 | ESC: 隐藏"
+        case .fineTuning: text = "微调模式 | HJKL: 移动 | Space: 点击 | M: 右键 | ESC: 退出"
+        case .scrolling: text = "滚动模式 | J/K: 滚动 | ESC: 退出"
+        case .hidden: return
+        }
+        
+        let fontSize: CGFloat = 12
+        let font = NSFont.systemFont(ofSize: fontSize)
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.white
+        ]
+        
+        let size = text.size(withAttributes: attrs)
+        let padding: CGFloat = 8
+        let margin: CGFloat = 20
+        let rect = NSRect(x: bounds.width - size.width - padding * 2 - margin,
+                          y: margin,
+                          width: size.width + padding * 2,
+                          height: size.height + padding * 2)
+        
+        NSColor(calibratedWhite: 0, alpha: 0.6).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+        
+        text.draw(at: NSPoint(x: rect.origin.x + padding, y: rect.origin.y + padding), withAttributes: attrs)
+    }
+    
+    private func drawGrid(in bounds: NSRect, app: AppDelegate) {
         let cellW = bounds.width / CGFloat(kGridCols)
         let cellH = bounds.height / CGFloat(kGridRows)
         let path = NSBezierPath()
@@ -413,16 +431,23 @@ class HintView: NSView {
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: kTextColor]
         
         for row in 0..<kGridRows {
+            // If we have a firstChar, only draw that specific row
             if let first = app.firstChar, letters[row] != first { continue }
+            
             for col in 0..<kGridCols {
                 let label = letters[row] + letters[col]
                 let x = CGFloat(col) * cellW; let y = CGFloat(row) * cellH
+                
+                // Highlight the cell if it's part of a narrowed selection
                 if app.firstChar != nil {
-                    kFocusColor.setFill(); CGRect(x: x, y: y, width: cellW, height: cellH).fill()
+                    kFocusColor.setFill()
+                    CGRect(x: x, y: y, width: cellW, height: cellH).fill()
                 }
+                
                 let labelSize = label.size(withAttributes: attrs)
                 let boxRect = CGRect(x: x + (cellW-labelSize.width-8)/2, y: y + (cellH-labelSize.height-4)/2, width: labelSize.width+8, height: labelSize.height+4)
-                kLabelBgColor.setFill(); NSBezierPath(roundedRect: boxRect, xRadius: 4, yRadius: 4).fill()
+                kLabelBgColor.setFill()
+                NSBezierPath(roundedRect: boxRect, xRadius: 4, yRadius: 4).fill()
                 NSString(string: label).draw(in: CGRect(x: boxRect.origin.x+4, y: boxRect.origin.y+2, width: labelSize.width, height: labelSize.height), withAttributes: attrs)
             }
         }
