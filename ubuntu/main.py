@@ -16,7 +16,8 @@ BG_COLOR = QtGui.QColor(0, 0, 0, 25)
 LABEL_BG_COLOR = QtGui.QColor(0, 0, 0, 180)
 FOCUS_COLOR = QtGui.QColor(0, 255, 0, 76)
 CURSOR_STEP = 15
-TAP_THRESHOLD = 0.5
+TAP_THRESHOLD = 0.4
+VERSION = "1.5.0-STABLE-FINAL"
 
 class AppState(Enum):
     HIDDEN = 0
@@ -35,12 +36,10 @@ class GridOverlay(QtWidgets.QWidget):
             QtCore.Qt.WindowType.FramelessWindowHint |
             QtCore.Qt.WindowType.WindowStaysOnTopHint |
             QtCore.Qt.WindowType.Tool |
-            QtCore.Qt.WindowType.WindowTransparentForInput |
-            QtCore.Qt.WindowType.X11BypassWindowManagerHint
+            QtCore.Qt.WindowType.WindowTransparentForInput
         )
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        # CRITICAL: Ensure mouse events are ignored by the widget itself
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         
         screen = QtWidgets.QApplication.primaryScreen()
@@ -50,6 +49,7 @@ class GridOverlay(QtWidgets.QWidget):
     def update_state(self, new_state):
         self.state = new_state
         if new_state == AppState.HIDDEN:
+            self.first_char = None
             self.hide()
         else:
             self.show()
@@ -110,7 +110,7 @@ class GridOverlay(QtWidgets.QWidget):
 class Controller(QtCore.QObject):
     state_changed = QtCore.pyqtSignal(object)
     request_paint = QtCore.pyqtSignal()
-    request_visibility = QtCore.pyqtSignal(bool) # Special signal for click bypass
+    request_reset = QtCore.pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -121,66 +121,65 @@ class Controller(QtCore.QObject):
         self.potential_toggle = False
         self.first_char = None
         self.is_dragging = False
-        self.t_mode = False
 
         self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         self.listener.start()
+        self.request_reset.connect(self.perform_reset)
 
     def set_overlay(self, overlay):
         self.overlay = overlay
         self.state_changed.connect(overlay.update_state)
         self.request_paint.connect(overlay.update)
-        self.request_visibility.connect(lambda visible: overlay.show() if visible else overlay.hide())
 
     def change_state(self, new_state):
         self.app_state = new_state
-        if new_state == AppState.HIDDEN:
+        if new_state == AppState.HIDDEN or new_state == AppState.GRID_SELECTION:
             self.first_char = None
             self.overlay.first_char = None
+        if new_state == AppState.HIDDEN:
             if self.is_dragging: self.toggle_drag(False)
         self.state_changed.emit(new_state)
 
+    def perform_reset(self):
+        # 强制回到网格选择状态，不消失窗口
+        print("DEBUG: Executing Reset")
+        self.change_state(AppState.GRID_SELECTION)
+
     def toggle_drag(self, enable):
-        # Even for drag, we hide briefly to initiate
         if enable:
-            self.request_visibility.emit(False)
+            # 拖拽也需要瞬间隐藏来穿透初始点击
+            self.state_changed.emit(AppState.HIDDEN)
             time.sleep(0.02)
             self.mouse_ctl.press(mouse.Button.left)
             time.sleep(0.02)
-            self.request_visibility.emit(True)
+            self.state_changed.emit(AppState.FINE_TUNING)
         else:
             self.mouse_ctl.release(mouse.Button.left)
         self.is_dragging = enable
 
-    def get_char(self, key):
-        if hasattr(key, 'char') and key.char: return key.char.upper()
-        try: return chr(key.vk).upper()
-        except: return None
-
     def async_click(self, button):
         def _click():
-            # 1. Hide briefly to bypass obstruction
-            self.request_visibility.emit(False)
+            # 关键：点击时瞬间隐藏，穿透遮挡
+            current_mode = self.app_state
+            self.state_changed.emit(AppState.HIDDEN)
             time.sleep(0.03) 
-            # 2. Perform Physical Click
             self.mouse_ctl.press(button)
             time.sleep(0.05)
             self.mouse_ctl.release(button)
             time.sleep(0.03)
-            # 3. Show back
-            if self.app_state != AppState.HIDDEN:
-                self.request_visibility.emit(True)
+            # 点击完立即恢复
+            if current_mode != AppState.HIDDEN:
+                self.state_changed.emit(current_mode)
         threading.Thread(target=_click, daemon=True).start()
 
     def on_press(self, key):
         if key == Key.alt_l:
-            self.potential_toggle = True
-            self.last_alt_time = time.time()
+            if not self.potential_toggle:
+                self.potential_toggle = True
+                self.last_alt_time = time.time()
             return
-
         if self.app_state == AppState.HIDDEN: return
         if key == Key.esc: self.change_state(AppState.HIDDEN); return
-
         if self.app_state == AppState.GRID_SELECTION:
             if key == Key.backspace:
                 self.first_char = None; self.overlay.first_char = None
@@ -194,7 +193,6 @@ class Controller(QtCore.QObject):
                     else:
                         self.select_grid(self.first_char + char)
             return
-
         elif self.app_state == AppState.FINE_TUNING:
             char = self.get_char(key)
             if char == 'H': self.mouse_ctl.move(-CURSOR_STEP, 0)
@@ -210,9 +208,9 @@ class Controller(QtCore.QObject):
                 self.keyboard_ctl.press(Key.ctrl); self.keyboard_ctl.press('c')
                 self.keyboard_ctl.release('c'); self.keyboard_ctl.release(Key.ctrl)
                 self.change_state(AppState.HIDDEN)
-            elif key == Key.backspace: self.change_state(AppState.GRID_SELECTION)
+            elif key == Key.backspace:
+                self.change_state(AppState.GRID_SELECTION)
             return
-
         elif self.app_state == AppState.SCROLLING:
             char = self.get_char(key)
             if char == 'J': self.mouse_ctl.scroll(0, -1)
@@ -222,12 +220,18 @@ class Controller(QtCore.QObject):
     def on_release(self, key):
         if key == Key.alt_l:
             if self.potential_toggle:
-                if time.time() - self.last_alt_time < TAP_THRESHOLD:
-                    self.change_state(AppState.GRID_SELECTION if self.app_state == AppState.HIDDEN else AppState.HIDDEN)
+                duration = time.time() - self.last_alt_time
+                if duration < TAP_THRESHOLD:
+                    self.request_reset.emit()
             self.potential_toggle = False
         if self.app_state == AppState.FINE_TUNING:
             char = self.get_char(key)
             if (char == 'T' or char == 'V') and self.is_dragging: self.toggle_drag(False)
+
+    def get_char(self, key):
+        if hasattr(key, 'char') and key.char: return key.char.upper()
+        try: return chr(key.vk).upper()
+        except: return None
 
     def select_grid(self, label):
         row, col = ord(label[0]) - 65, ord(label[1]) - 65
@@ -243,7 +247,7 @@ def main():
     controller = Controller()
     overlay = GridOverlay()
     controller.set_overlay(overlay)
-    print("GridClicker Started. Tap Left Alt to toggle.")
+    print(f"GridClicker Started ({VERSION}).")
     sys.exit(app.exec())
 
 if __name__ == "__main__":
