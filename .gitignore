@@ -4,3 +4,10 @@ dist/
 Packages/
 *.xcodeproj/
 
+# Linux / Python
+**/venv/
+**/__pycache__/
+*.deb
+build_deb/
+*.log
+
