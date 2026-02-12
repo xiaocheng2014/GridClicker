@@ -127,30 +127,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func handleGlobalEvent(type: CGEventType, event: CGEvent) -> Bool {
-        // --- Logic for HIDDEN state (Only detect Cmd Tap) ---
-        if state == .hidden {
-            if type == .flagsChanged {
-                let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-                let flags = event.flags
-                if keyCode == 55 { // Left Cmd
-                    if flags.contains(.maskCommand) {
-                        cmdDownTime = Date().timeIntervalSince1970
-                        isPotentialTap = true
-                    } else {
-                        if isPotentialTap {
-                            let diff = Date().timeIntervalSince1970 - cmdDownTime
-                            if diff < kTapThreshold {
-                                DispatchQueue.main.async { self.toggleGrid() }
-                            }
+        // --- 1. Global Command Tap Detection ---
+        if type == .flagsChanged {
+            let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+            let flags = event.flags
+            if keyCode == 55 { // Left Cmd
+                if flags.contains(.maskCommand) {
+                    cmdDownTime = Date().timeIntervalSince1970
+                    isPotentialTap = true
+                } else {
+                    if isPotentialTap {
+                        let diff = Date().timeIntervalSince1970 - cmdDownTime
+                        if diff < kTapThreshold {
+                            DispatchQueue.main.async { self.toggleGrid() }
                         }
-                        isPotentialTap = false
                     }
-                } else { isPotentialTap = false }
-            } else if type == .keyDown { isPotentialTap = false }
-            return false // Pass everything through
+                    isPotentialTap = false
+                }
+            } else { isPotentialTap = false }
+        } else if type == .keyDown {
+            isPotentialTap = false
+        }
+
+        // --- 2. Logic for HIDDEN state (Pass through) ---
+        if state == .hidden {
+            return false
         }
         
-        // --- Logic for ACTIVE states (Intercept Keys) ---
+        // --- 3. Logic for ACTIVE states (Intercept Keys) ---
         
         // Always pass through modifier flags (Shift, Cmd, etc.) to avoid sticking
         if type == .flagsChanged { return false }
@@ -265,8 +269,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func toggleGrid() {
-        if state == .hidden || state == .scrolling { state = .gridSelection }
-        else { state = .hidden }
+        if state == .hidden {
+            state = .gridSelection
+        } else if state == .gridSelection && firstChar == nil {
+            state = .hidden
+        } else {
+            // If in fineTuning, scrolling, or gridSelection with firstChar,
+            // reset to initial grid selection state.
+            state = .gridSelection
+            firstChar = nil
+        }
+        
         // Force immediate redraw
         DispatchQueue.main.async {
             self.hintView.needsDisplay = true
