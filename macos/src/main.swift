@@ -1,10 +1,10 @@
 import Cocoa
 
 // MARK: - Configuration
-let kGridRows = 26
-let kGridCols = 26
+let kGridRows = 36
+let kGridCols = 36
 let kLineWidth: CGFloat = 1.0
-let kLineColor = NSColor(calibratedRed: 0, green: 1, blue: 1, alpha: 0.3)
+let kLineColor = NSColor(calibratedRed: 0, green: 1, blue: 1, alpha: 0.8)
 let kTextColor = NSColor.yellow
 let kBackgroundColor = NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.1)
 let kLabelBgColor = NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.7)
@@ -20,7 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     var cmdDownTime: TimeInterval = 0
     var isPotentialTap = false
-    let kTapThreshold: TimeInterval = 0.3
+    let kTapThreshold: TimeInterval = 0.5
     
     var isDragging: Bool = false
     var isTMode: Bool = false
@@ -118,7 +118,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 return Unmanaged.passUnretained(event)
             },
             userInfo: observer
-        ) else { return }
+        ) else { 
+            print("ERROR: Failed to create Global Event Tap. Check Accessibility Permissions!")
+            return 
+        }
         
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
@@ -259,11 +262,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // Simple QWERTY mapping for A-Z
     func keyCodeToChar(_ code: Int64) -> String? {
         // Map common codes. A=0, S=1, D=2, F=3, H=4, G=5, Z=6, X=7, C=8, V=9 ...
-        // This is tedious but robust for US layout.
+        // Added numbers: 1=18, 2=19, 3=20, 4=21, 5=23, 6=22, 7=26, 8=28, 9=25, 0=29
         let map: [Int64: String] = [
             0:"A", 1:"S", 2:"D", 3:"F", 4:"H", 5:"G", 6:"Z", 7:"X", 8:"C", 9:"V", 11:"B",
             12:"Q", 13:"W", 14:"E", 15:"R", 16:"Y", 17:"T", 31:"O", 32:"U", 34:"I", 35:"P",
-            37:"L", 38:"J", 40:"K", 45:"N", 46:"M"
+            37:"L", 38:"J", 40:"K", 45:"N", 46:"M",
+            18:"1", 19:"2", 20:"3", 21:"4", 23:"5", 22:"6", 26:"7", 28:"8", 25:"9", 29:"0"
         ]
         return map[code]
     }
@@ -328,10 +332,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func selectGrid(label: String) {
-        let chars = Array(label)
-        let row = Int(chars[0].asciiValue! - 65)
-        let col = Int(chars[1].asciiValue! - 65)
-        guard row >= 0 && row < kGridRows && col >= 0 && col < kGridCols else { firstChar = nil; hintView.needsDisplay = true; return }
+        let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        let labelChars = Array(label)
+        guard let row = chars.firstIndex(of: labelChars[0]).map({ chars.distance(from: chars.startIndex, to: $0) }),
+              let col = chars.firstIndex(of: labelChars[1]).map({ chars.distance(from: chars.startIndex, to: $0) }) else {
+            firstChar = nil
+            hintView.needsDisplay = true
+            return
+        }
         
         guard let screen = window.screen else { return }
         let deviceDescription = screen.deviceDescription
@@ -455,17 +463,17 @@ class HintView: NSView {
         }
         path.stroke()
         
-        let letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".map { String($0) }
-        let fontSize: CGFloat = 14
+        let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".map { String($0) }
+        let fontSize: CGFloat = 11
         let font = NSFont(name: "Menlo-Bold", size: fontSize) ?? NSFont.boldSystemFont(ofSize: fontSize)
         let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: kTextColor]
         
         for row in 0..<kGridRows {
             // If we have a firstChar, only draw that specific row
-            if let first = app.firstChar, letters[row] != first { continue }
+            if let first = app.firstChar, chars[row] != first { continue }
             
             for col in 0..<kGridCols {
-                let label = letters[row] + letters[col]
+                let label = chars[row] + chars[col]
                 let x = CGFloat(col) * cellW; let y = CGFloat(row) * cellH
                 
                 // Highlight the cell if it's part of a narrowed selection
@@ -475,10 +483,10 @@ class HintView: NSView {
                 }
                 
                 let labelSize = label.size(withAttributes: attrs)
-                let boxRect = CGRect(x: x + (cellW-labelSize.width-8)/2, y: y + (cellH-labelSize.height-4)/2, width: labelSize.width+8, height: labelSize.height+4)
+                let boxRect = CGRect(x: x + (cellW-labelSize.width-4)/2, y: y + (cellH-labelSize.height-2)/2, width: labelSize.width+4, height: labelSize.height+2)
                 kLabelBgColor.setFill()
-                NSBezierPath(roundedRect: boxRect, xRadius: 4, yRadius: 4).fill()
-                NSString(string: label).draw(in: CGRect(x: boxRect.origin.x+4, y: boxRect.origin.y+2, width: labelSize.width, height: labelSize.height), withAttributes: attrs)
+                NSBezierPath(roundedRect: boxRect, xRadius: 2, yRadius: 2).fill()
+                NSString(string: label).draw(in: CGRect(x: boxRect.origin.x+2, y: boxRect.origin.y+1, width: labelSize.width, height: labelSize.height), withAttributes: attrs)
             }
         }
     }

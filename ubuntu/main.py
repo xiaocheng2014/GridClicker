@@ -8,8 +8,8 @@ from pynput import keyboard, mouse
 from pynput.keyboard import Key, KeyCode
 
 # --- Configuration ---
-GRID_ROWS = 26
-GRID_COLS = 26
+GRID_ROWS = 36
+GRID_COLS = 36
 LINE_COLOR = QtGui.QColor(0, 255, 255, 76)
 TEXT_COLOR = QtGui.QColor(255, 255, 0)
 BG_COLOR = QtGui.QColor(0, 0, 0, 25)
@@ -17,7 +17,7 @@ LABEL_BG_COLOR = QtGui.QColor(0, 0, 0, 180)
 FOCUS_COLOR = QtGui.QColor(0, 255, 0, 76)
 CURSOR_STEP = 15
 TAP_THRESHOLD = 0.4
-VERSION = "1.5.0-STABLE-FINAL"
+VERSION = "1.6.0-EXPANDED"
 
 class AppState(Enum):
     HIDDEN = 0
@@ -92,18 +92,19 @@ class GridOverlay(QtWidgets.QWidget):
         for i in range(1, GRID_ROWS):
             y = i * cell_h
             painter.drawLine(0, int(y), w, int(y))
-        letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        painter.setFont(QtGui.QFont("Monospace", 14, QtGui.QFont.Weight.Bold))
+        chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        painter.setFont(QtGui.QFont("Monospace", 10, QtGui.QFont.Weight.Bold))
         for r in range(GRID_ROWS):
-            if self.first_char and letters[r] != self.first_char: continue
+            if self.first_char and chars[r] != self.first_char: continue
             for c in range(GRID_COLS):
-                label = letters[r] + letters[c]
+                label = chars[r] + chars[c]
                 x, y = c * cell_w, r * cell_h
                 if self.first_char: painter.fillRect(QtCore.QRectF(x, y, cell_w, cell_h), FOCUS_COLOR)
                 painter.setBrush(LABEL_BG_COLOR)
                 painter.setPen(QtCore.Qt.PenStyle.NoPen)
-                lx, ly = int(x + (cell_w - 30) / 2), int(y + (cell_h - 25) / 2)
-                painter.drawRoundedRect(lx, ly, 30, 25, 4, 4)
+                lw, lh = 24, 20
+                lx, ly = int(x + (cell_w - lw) / 2), int(y + (cell_h - lh) / 2)
+                painter.drawRoundedRect(lx, ly, lw, lh, 4, 4)
                 painter.setPen(TEXT_COLOR)
                 painter.drawText(QtCore.QRectF(x, y, cell_w, cell_h), QtCore.Qt.AlignmentFlag.AlignCenter, label)
 
@@ -186,7 +187,8 @@ class Controller(QtCore.QObject):
                 self.request_paint.emit()
             else:
                 char = self.get_char(key)
-                if char and "A" <= char <= "Z":
+                chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                if char and char in chars:
                     if self.first_char is None:
                         self.first_char = char; self.overlay.first_char = char
                         self.request_paint.emit()
@@ -234,12 +236,18 @@ class Controller(QtCore.QObject):
         except: return None
 
     def select_grid(self, label):
-        row, col = ord(label[0]) - 65, ord(label[1]) - 65
-        if 0 <= row < GRID_ROWS and 0 <= col < GRID_COLS:
-            geo = self.overlay.screen_geo
-            cw, ch = geo.width() / GRID_COLS, geo.height() / GRID_ROWS
-            self.mouse_ctl.position = (geo.x() + col * cw + cw / 2, geo.y() + row * ch + ch / 2)
-            self.change_state(AppState.FINE_TUNING)
+        chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        try:
+            row, col = chars.index(label[0]), chars.index(label[1])
+            if 0 <= row < GRID_ROWS and 0 <= col < GRID_COLS:
+                geo = self.overlay.screen_geo
+                cw, ch = geo.width() / GRID_COLS, geo.height() / GRID_ROWS
+                self.mouse_ctl.position = (geo.x() + col * cw + cw / 2, geo.y() + row * ch + ch / 2)
+                self.change_state(AppState.FINE_TUNING)
+        except ValueError:
+            self.first_char = None
+            self.overlay.first_char = None
+            self.request_paint.emit()
 
 def main():
     app = QtWidgets.QApplication(sys.argv)

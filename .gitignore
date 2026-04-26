@@ -11,3 +11,7 @@ Packages/
 build_deb/
 *.log
 
+# AI Tools
+.gemini/
+.claude/
+
